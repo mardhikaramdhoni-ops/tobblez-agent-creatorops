@@ -1,54 +1,68 @@
+"""
+vector_store.py - ChromaDB Vector Store Layer for CreatorOps AI Agent
+Stores and retrieves writing styles & creator personas.
+"""
+import logging
 import chromadb
-from config import settings
+from typing import List
 
-# Inisialisasi Client ChromaDB (Persistent)
-chroma_client = chromadb.PersistentClient(path=settings.CHROMA_PATH)
+# Setup Logger
+logger = logging.getLogger("CreatorOps.VectorStore")
+logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 
-# Buat collection (kayak tabel di SQL tapi buat vector)
-# Kita kasih nama 'creator_style'
+# Persistent ChromaDB Client
+chroma_client = chromadb.PersistentClient(path="./chroma_db")
 collection = chroma_client.get_or_create_collection(name="creator_style")
 
-def add_style_example(content, metadata):
-    """
-    Nambahin contoh gaya konten lu ke database
-    """
-    # Di V1 ini, kita biarin ChromaDB pake embedding bawaan (Default)
-    # Nanti di V-selanjutnya kita bisa upgrade pake HuggingFace/OpenAI embedding
-    def datetime_now():
-        ...
 
-    collection.add(
-        documents=[content],
-        metadatas=[metadata],
-        ids=[f"id_{datetime_now()}"] # Pake timestamp atau string unik
-    )
-    print("✨ Gaya konten berhasil ditambahin ke Vector Store!")
+def add_style_sample(text: str, style_name: str = "default_persona"):
+    """Menyimpan sampel gaya penulisan ke ChromaDB."""
+    try:
+        # Pake hash/length sederhana buat ID
+        doc_id = f"style_{hash(text)}"
+        collection.add(
+            documents=[text],
+            metadatas=[{"style_name": style_name}],
+            ids=[doc_id]
+        )
+        logger.info(f"💾 Added style sample to ChromaDB (ID: {doc_id})")
+    except Exception as e:
+        logger.error(f"❌ Error adding style to ChromaDB: {str(e)}")
 
-def query_style(query_text):
-    """
-    Nyari contoh gaya konten yang paling mirip sama draf lu
-    """
-    results = collection.query(
-        query_texts=[query_text],
-        n_results=1
-    )
-    return results['documents'][0] if results['documents'] else []
 
+def search_similar_styles(query: str, n_results: int = 2) -> str:
+    """
+    Mencari sampel gaya penulisan yang mirip berdasarkan query topik.
+    """
+    logger.info(f"🔍 [VectorStore] Querying styles for: '{query}'")
+    try:
+        count = collection.count()
+        if count == 0:
+            logger.warning("⚠️ ChromaDB collection is empty! Returning default style fallback.")
+            return "Gaya penulisan: Kasual, santai, to-the-point, edukatif, dan menarik perhatian anak muda/tech enthusiast."
+
+        results = collection.query(
+            query_texts=[query],
+            n_results=min(n_results, count)
+        )
+        
+        documents = results.get("documents", [[]])[0]
+        if not documents:
+            return "Gaya penulisan: Kasual, santai, to-the-point, edukatif."
+            
+        return "\n---\n".join(documents)
+
+    except Exception as e:
+        logger.error(f"❌ Error retrieving style from ChromaDB: {str(e)}")
+        return "Gaya penulisan: Kasual, santai, to-the-point, edukatif."
+
+
+# --- TEST RUNNER (ISOLATED TEST) ---
 if __name__ == "__main__":
-    # Test input gaya konten lu
-    import time
+    print("🧪 Testing Vector Store...")
+    # Seed data jika kosong
+    add_style_sample("Gaya penulisan gw itu santai, pake bahasa 'lu/gw', pembukaan pake HOOK yang bikin penasaran, dan penutupan selalu ngajak diskusi.")
     
-    # Kita masukin contoh gaya konten "Tobblez Style"
-    sample_style = "Gaya Tobblez: Pake bahasa santai (lu/gw), teknis banget, to the point, dan selalu ada bumbu MLOps-nya."
-    
-    collection.add(
-        documents=[sample_style],
-        metadatas=[{"category": "personality"}],
-        ids=["style_1"]
-    )
-    
-    print("✅ ChromaDB Ready & Style Added!")
-    
-    # Test Query
-    res = query_style("Gimana cara ngomong yang santai?")
-    print(f"Hasil pencarian gaya: {res}")
+    res = search_similar_styles("AI trends")
+    print("\n--- RETRIEVED STYLE ---")
+    print(res)
