@@ -6,7 +6,7 @@ import logging
 import urllib.parse
 import urllib.request
 import xml.etree.ElementTree as ET
-from typing import List, Dict, Any
+from typing import List, Dict
 
 # Setup Logger
 logger = logging.getLogger("CreatorOps.Tools")
@@ -16,26 +16,16 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(
 def search_web(query: str, max_results: int = 5, lang: str = "id") -> List[Dict[str, str]]:
     """
     Melakukan pencarian tren berita via Google News RSS.
-    
-    Args:
-        query (str): Kata kunci pencarian (misal: "AI trend", "Tips Content Creator").
-        max_results (int): Jumlah hasil pencarian maksimal.
-        lang (str): 'id' untuk Indonesia, 'en' untuk Global.
-        
-    Returns:
-        List[Dict[str, str]]: List of dict berisi 'title', 'link', dan 'snippet'.
     """
     logger.info(f"🔍 [Tool: WebSearch] Executing query: '{query}'")
-    
-    # Format URL sesuai bahasa
     encoded_query = urllib.parse.quote(query)
+    
     if lang == "id":
         rss_url = f"https://news.google.com/rss/search?q={encoded_query}&hl=id&gl=ID&ceid=ID:id"
     else:
         rss_url = f"https://news.google.com/rss/search?q={encoded_query}&hl=en-US&gl=US&ceid=US:en"
         
     try:
-        # Pura-pura jadi browser biar gak diblokir header-nya
         headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'}
         req = urllib.request.Request(rss_url, headers=headers)
         
@@ -71,11 +61,10 @@ def search_web(query: str, max_results: int = 5, lang: str = "id") -> List[Dict[
 
 def format_search_results_for_llm(results: List[Dict[str, str]]) -> str:
     """
-    Helper untuk mengonversi hasil search jadi format teks 
-    yang rapi dan siap dikonsumsi oleh LLM.
+    Helper untuk mengonversi hasil search jadi format teks yang siap dikonsumsi LLM.
     """
     if not results:
-        return "Tidak ada hasil pencarian yang ditemukan."
+        return "Tidak ada hasil pencarian berita tren terkini."
     
     formatted_text = "--- HASIL RISET TREN WEB TERKINI ---\n"
     for idx, item in enumerate(results, start=1):
@@ -84,14 +73,3 @@ def format_search_results_for_llm(results: List[Dict[str, str]]) -> str:
         formatted_text += f"Info: {item['snippet']}\n"
     formatted_text += "\n-----------------------------------"
     return formatted_text
-
-
-# --- TEST RUNNER (ISOLATED TEST) ---
-if __name__ == "__main__":
-    print("🧪 Testing Google News Search Tool...")
-    test_query = "Teknologi Artificial Intelligence"
-    
-    raw_results = search_web(query=test_query, max_results=3, lang="id")
-    
-    print("\n--- FORMATTED FOR LLM ---")
-    print(format_search_results_for_llm(raw_results))
