@@ -1,13 +1,12 @@
 """
-agent.py - Realtime Async Streaming Agent for CreatorOps V3.0
+agent.py - Realtime Async Streaming Agent for CreatorOps V4.0 (Bulletproof)
 """
 import asyncio
 from typing import AsyncGenerator
 from groq import AsyncGroq
 from app.core.config import settings
 from app.services.tools import search_web, format_search_results_for_llm
-from app.db.vector_store import search_similar_styles
-from app.db.vector_store import query_style
+from app.db.vector_store import search_similar_styles, query_style
 
 # Inisialisasi Async Client Groq
 groq_client = AsyncGroq(api_key=settings.GROQ_API_KEY)
@@ -15,15 +14,24 @@ groq_client = AsyncGroq(api_key=settings.GROQ_API_KEY)
 
 async def stream_generate_ideas(topic: str) -> AsyncGenerator[str, None]:
     """
-    Async Generator yang nge-stream output ReAct Agent ke SSE Endpoint chunk demi chunk.
+    Async Generator yang aman dan tahan banting.
+    Mengirim stream token ke SSE. Jika ada error, dikirim sebagai teks ke layar.
     """
-    # 1. Non-blocking I/O: Ambil Tren & RAG Persona Style
-    raw_news = await asyncio.to_thread(search_web, topic, 3, "id")
-    news_data = format_search_results_for_llm(raw_news)
-    style_context = await asyncio.to_thread(search_similar_styles, topic, 2)
+    try:
+        # 1. Non-blocking I/O: Ambil Tren & RAG Persona Style (dengan fallback aman)
+        try:
+            raw_news = await asyncio.to_thread(search_web, topic, 3, "id")
+            news_data = format_search_results_for_llm(raw_news)
+        except Exception as e:
+            news_data = f"(Pencarian web dilewati: {str(e)})"
 
-    system_prompt = f"""
-Lu adalah AI Content Strategist handal (CreatorOps V3.0).
+        try:
+            style_context = await asyncio.to_thread(search_similar_styles, topic, 2)
+        except Exception as e:
+            style_context = "(Gaya default kreator)"
+
+        system_prompt = f"""
+Lu adalah AI Content Strategist handal (CreatorOps V4.0).
 
 [GAYA PENULISAN / CREATOR PERSONA]
 {style_context}
@@ -39,29 +47,33 @@ Gunakan format Markdown yang rapi:
 - Struktur Singkat (Hook, Body, Call to Action)
 """
 
-    # 2. Panggil Groq LLM secara Realtime Streaming
-    response_stream = await groq_client.chat.completions.create(
-        model=settings.GROQ_MODEL,
-        messages=[
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": f"Bikinin ide konten viral untuk topik: {topic}"}
-        ],
-        temperature=0.7,
-        stream=True
-    )
+        # Pastikan nama model valid (Gunakan fallback jika salah satu None)
+        model_name = getattr(settings, "GROQ_MODEL", None) or getattr(settings, "LLM_MODEL", "llama-3.3-70b-versatile")
 
-    # 3. Stream token per token langsung ke client
-    async for chunk in response_stream:
-        content = chunk.choices[0].delta.content
-        if content:
-            yield content
+        # 2. Panggil Groq LLM secara Realtime Streaming
+        response_stream = await groq_client.chat.completions.create(
+            model=model_name,
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": f"Bikinin ide konten viral untuk topik: {topic}"}
+            ],
+            temperature=0.7,
+            stream=True
+        )
+
+        # 3. Stream token per token langsung ke client
+        async for chunk in response_stream:
+            content = chunk.choices[0].delta.content
+            if content:
+                yield content
+
+    except Exception as err:
+        # JIKA TERJADI ERROR, JANGAN CRASH! Kirim errornya ke terminal CRT browser!
+        yield f"\n\n🚨 [SYSTEM ENGINE ERROR]: {str(err)}\nPastikan GROQ_API_KEY valid dan kuota mencukupi."
+
 
 async def audit_script_async(script_text: str, platform: str) -> str:
-    """
-    Mengaudit draf naskah secara async menggunakan AsyncGroq
-    dikombinasikan dengan RAG Style dari ChromaDB.
-    """
-    # 1. Ambil gaya bahasa kreator dari ChromaDB
+    # ... fungsi audit_script_async lu tetap sama ...
     style_context = query_style(query_text=script_text[:120], n_results=2)
     
     system_prompt = (
@@ -78,9 +90,11 @@ async def audit_script_async(script_text: str, platform: str) -> str:
 
     user_prompt = f"Target Platform: {platform}\n\nDraf Naskah:\n\"\"\"\n{script_text}\n\"\"\""
 
+    model_name = getattr(settings, "LLM_MODEL", None) or getattr(settings, "GROQ_MODEL", "llama-3.3-70b-versatile")
+
     try:
         response = await groq_client.chat.completions.create(
-            model=settings.LLM_MODEL,
+            model=model_name,
             messages=[
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_prompt}
@@ -91,4 +105,4 @@ async def audit_script_async(script_text: str, platform: str) -> str:
         )
         return response.choices[0].message.content
     except Exception as e:
-        raise RuntimeError(f"LLM Audit Error: {str(e)}")            
+        raise RuntimeError(f"LLM Audit Error: {str(e)}")
